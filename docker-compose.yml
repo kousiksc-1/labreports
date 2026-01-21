@@ -1,0 +1,161 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: rag_postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-rag_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rag_password}
+      POSTGRES_DB: ${POSTGRES_DATABASE:-rag_db}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      # pg_isready defaults to database == user if -d isn't provided; we want to check the configured DB.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-rag_user} -d ${POSTGRES_DATABASE:-rag_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - rag_network
+
+  # Redis Cache (Optional but recommended)
+  redis:
+    image: redis:7-alpine
+    container_name: rag_redis
+    ports:
+      # 6379 is commonly already taken on dev machines; default host port to 6380.
+      - "${REDIS_PORT:-6380}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - rag_network
+
+  # Backend API
+  backend:
+    build:
+      context: ./RAG-Anything
+      dockerfile: Dockerfile
+    container_name: rag_backend
+    environment:
+      # Database
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-rag_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rag_password}
+      POSTGRES_DATABASE: ${POSTGRES_DATABASE:-rag_db}
+      
+      # Redis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: 0
+      CONTEXT_CACHE_TTL: ${CONTEXT_CACHE_TTL:-3600}
+      
+      # Server
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: 8000
+      
+      # JWT
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me-in-production}
+      JWT_EXPIRES_MIN: ${JWT_EXPIRES_MIN:-120}
+      
+      # Chat
+      CHAT_CONTEXT_WINDOW: ${CHAT_CONTEXT_WINDOW:-20}
+      
+      # LLM Configuration
+      LLM_BINDING: ${LLM_BINDING:-openai}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+      LLM_BINDING_API_KEY: ${LLM_BINDING_API_KEY:-${OPENAI_API_KEY}}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      
+      # ChromaDB (optional)
+      USE_CHROMADB: ${USE_CHROMADB:-false}
+      
+      # Cost Logging
+      ENABLE_COST_LOGGING: ${ENABLE_COST_LOGGING:-true}
+      LLM_MODEL_NAME: ${LLM_MODEL_NAME:-gpt-4o-mini}
+    ports:
+      - "${SERVER_PORT:-8000}:8000"
+    volumes:
+      # Persist data directories
+      - ./RAG-Anything/data:/app/data
+      # Mount lab reports if needed
+      - ./lab_reports_final:/app/lab_reports_final:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend_init:
+        condition: service_completed_successfully
+    networks:
+      - rag_network
+    restart: unless-stopped
+
+  # One-time initializer (uses existing parsed markdown under ./RAG-Anything/data/parsed)
+  # Runs DB schema + hydration, then exits.
+  backend_init:
+    build:
+      context: ./RAG-Anything
+      dockerfile: Dockerfile
+    container_name: rag_backend_init
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-rag_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rag_password}
+      POSTGRES_DATABASE: ${POSTGRES_DATABASE:-rag_db}
+      PARSE_OUTPUT_DIR: ${PARSE_OUTPUT_DIR:-data/parsed}
+    volumes:
+      - ./RAG-Anything/data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - rag_network
+    restart: "no"
+    command: >
+      sh -lc "
+        echo '🔧 Initializing chat schema...' &&
+        python scripts/00_init_chat_schema.py &&
+        echo '🔧 Initializing cost tracking schema (optional)...' &&
+        python scripts/00_init_cost_tracking.py || true &&
+        echo '🔧 Hydrating Postgres from already-parsed markdown under /app/data/parsed ...' &&
+        python scripts/04_hydrate_postgres_from_parsed.py
+      "
+
+  # Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Build-time API base URL (what browser will use)
+        # Use localhost:8000 since browser accesses from host machine
+        VITE_API_BASE: ${VITE_API_BASE:-http://localhost:8000}
+    container_name: rag_frontend
+    ports:
+      - "${FRONTEND_PORT:-5173}:80"
+    depends_on:
+      - backend
+    networks:
+      - rag_network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  rag_network:
+    driver: bridge
