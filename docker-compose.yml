@@ -45,6 +45,8 @@ services:
       context: ./RAG-Anything
       dockerfile: Dockerfile
     container_name: rag_backend
+    env_file:
+      - ./RAG-Anything/.env  # Load environment variables from RAG-Anything/.env
     environment:
       # Database
       POSTGRES_HOST: postgres
@@ -73,11 +75,7 @@ services:
       # LLM Configuration
       LLM_BINDING: ${LLM_BINDING:-openai}
       LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
-      LLM_BINDING_API_KEY: ${LLM_BINDING_API_KEY:-${OPENAI_API_KEY}}
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
-      
-      # ChromaDB (optional)
-      USE_CHROMADB: ${USE_CHROMADB:-false}
+      # API keys are loaded from env_file (./RAG-Anything/.env). Do not override here.
       
       # Cost Logging
       ENABLE_COST_LOGGING: ${ENABLE_COST_LOGGING:-true}
@@ -89,6 +87,9 @@ services:
       - ./RAG-Anything/data:/app/data
       # Mount lab reports if needed
       - ./lab_reports_final:/app/lab_reports_final:ro
+      # Mount scripts and raganything for live code updates (no rebuild needed)
+      - ./RAG-Anything/scripts:/app/scripts
+      - ./RAG-Anything/raganything:/app/raganything
     depends_on:
       postgres:
         condition: service_healthy
@@ -107,6 +108,8 @@ services:
       context: ./RAG-Anything
       dockerfile: Dockerfile
     container_name: rag_backend_init
+    env_file:
+      - ./RAG-Anything/.env  # Load environment variables from RAG-Anything/.env
     environment:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
@@ -114,8 +117,13 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rag_password}
       POSTGRES_DATABASE: ${POSTGRES_DATABASE:-rag_db}
       PARSE_OUTPUT_DIR: ${PARSE_OUTPUT_DIR:-data/parsed}
+      POSTGRES_CONFIG: init  # Create tables on first run
+      REPORTS_SRC: ${REPORTS_SRC:-lab_reports_final}
     volumes:
       - ./RAG-Anything/data:/app/data
+      - ./RAG-Anything/scripts:/app/scripts  # Mount scripts for live code updates
+      - ./RAG-Anything/raganything:/app/raganything  # Mount raganything module too
+      - ./lab_reports_final:/app/lab_reports_final:ro  # Mount lab reports for bootstrap
     depends_on:
       postgres:
         condition: service_healthy
@@ -128,6 +136,8 @@ services:
         python scripts/00_init_chat_schema.py &&
         echo '🔧 Initializing cost tracking schema (optional)...' &&
         python scripts/00_init_cost_tracking.py || true &&
+        echo '🔧 Creating patients/reports/observations tables...' &&
+        python scripts/01_bootstrap_postgres_from_filenames.py || true &&
         echo '🔧 Hydrating Postgres from already-parsed markdown under /app/data/parsed ...' &&
         python scripts/04_hydrate_postgres_from_parsed.py
       "
