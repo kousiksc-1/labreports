@@ -1,0 +1,29 @@
+huggingface_hub>=0.20.0
+# LightRAG packages
+# lightrag-hku
+
+# Docling CLI for fast text/table parsing
+docling
+# Postgres + .env for structured DB bootstrap scripts
+psycopg[binary]
+python-dotenv
+# Chatbot deps
+openai
+pypdf
+# API and Auth
+fastapi
+uvicorn
+python-multipart
+PyJWT
+passlib[bcrypt]
+pydantic[email]
+email-validator>=2.0.0
+# Redis for context caching
+redis>=5.0.0
+# Progress bars for batch processing
+tqdm
+psycopg
+
+# Docker/build stability (avoid ancient Jinja2/MarkupSafe backtracking that breaks on modern setuptools)
+Jinja2>=3.1.4
+MarkupSafe>=2.1.5

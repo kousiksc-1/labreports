@@ -1,0 +1,28 @@
+# Optimized requirements for Docker builds
+# Split into stages for better caching
+
+# Stage 1: Core API dependencies (fast install)
+fastapi
+uvicorn
+python-multipart
+PyJWT
+passlib[bcrypt]
+pydantic[email]
+email-validator>=2.0.0
+
+# Stage 2: Database and caching
+psycopg[binary]
+redis>=5.0.0
+python-dotenv
+
+# Stage 3: Basic utilities
+pypdf
+tqdm
+
+# Stage 4: ML/AI packages (moderate size)
+openai
+huggingface_hub
+
+# Stage 5: Document processing (very heavy, may take 10-20 min)
+docling
+lightrag-hku
